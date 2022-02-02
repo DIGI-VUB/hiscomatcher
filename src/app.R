@@ -40,7 +40,7 @@ settings$DB <- R_user_dir(package = "hisco", which = "data")
 if(!dir.exists(settings$DB)) dir.create(settings$DB, recursive = TRUE)
 settings$url_hisco            <- "https://iisg.amsterdam/en/data/data-websites/history-of-work"
 settings$url_hisco_data       <- "https://datasets.iisg.amsterdam/dataset.xhtml?persistentId=hdl:10622/MUZMAL"
-load("C:/Users/Jan/OneDrive - Vrije Universiteit Brussel/projects/adhoc/beroepen/data/hisco.RData")
+load(url("https://github.com/DIGI-VUB/hiscomatcher/raw/master/data/hisco.RData"))
 settings$HISCO_fields <- c("ID", "Original", "Standard", "HISCO", "STATUS", "RELATION", 
                            "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
                            "SOCPO", "OCC1950", "Release")
