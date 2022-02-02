@@ -19,11 +19,24 @@ engine_db <- function(..., DB = settings$DB, FUN = dbListTables){
   })
   FUN(con, ...)
 }
-write_db <- function(..., DB = settings$DB){
-  engine_db(..., DB = DB, FUN = dbWriteTable)
+write_db <- function(...){
+  engine_db(..., FUN = dbWriteTable)
 }
-read_db <- function(..., DB = settings$DB){
-  engine_db(..., DB = DB, FUN = dbGetQuery)
+read_db <- function(...){
+  engine_db(..., FUN = dbGetQuery)
+}
+table_exists <- function(x){
+  x %in% engine_db(FUN = dbListTables)
+}
+read_matched <- function(){
+  if(table_exists("hisco_matched")){
+    read_db("select * from hisco_matched")
+  }else{
+    data.frame()
+  }
+}
+read_hisco <- function(){
+  read_db("select * from hisco_beroepen")
 }
 txt_standardiser <- function(x){
   ## Put all in ASCII, lowercase, keep only letters and spaces, no special spaces/punctuation symbols
@@ -320,18 +333,12 @@ shinyApp(
               CURRENT_DIR = getwd(),
               DESKTOP = file.path(Sys.getenv("USERPROFILE"), "Desktop"))
     dirs <- na.exclude(dirs)
+    ##################################################################################v
+    ## UI of data uploading
+    ##
     uploaded_file <- reactive({
       path <- parseFilePaths(dirs, input$ui_upload_file)$datapath
       path
-    })
-    hisco_DB <- reactive({
-      input$ui_upload_file
-      #ds <- settings$HISCO
-      ds <- read_db("select * from hisco_beroepen")
-      ds
-    })
-    has_uploaded <- reactive({
-      length(uploaded_file()) > 0
     })
     uploaded_file_read <- reactive({
       p <- uploaded_file()
@@ -401,19 +408,26 @@ shinyApp(
         NULL
       }
     })
-    # output$filechosen <- renderText({
-    #   print(uploaded_file())
-    #   as.character(parseFilePaths(c(home = "/home/guest/test_data"), uploaded_file())$datapath)
-    #   # Either is fine
-    #   # parseFilePaths(c(home = "/home/guest/test_data"),file())$datapath,stringAsFactors=F)
-    # })
+    ##################################################################################v
+    ## UI of matching
+    ##
+    DB_HISCO <- reactive({
+      input$ui_upload_file
+      #ds <- settings$HISCO
+      ds <- read_hisco()
+      ds
+    })
+    DB_matched <- reactive({
+      x <- read_matched()
+      x
+    })
     output$uo_stats_records_own <- renderUI({
       ds <- uploaded_file_read()
       n  <- nrow(ds$data)
       infoBox(title = "Aantal records", subtitle = "in jouw dataset", value = n, color = "success", icon = icon("database"), width = 12, elevation = 4)
     })
     output$uo_stats_records_hisco <- renderUI({
-      ds <- hisco_DB()
+      ds <- DB_HISCO()
       n  <- nrow(ds)
       infoBox(title = "Aantal records", subtitle = "in HISCO", value = n, color = "info", icon = icon("sliders-h"), width = 12, elevation = 4)
       # valueBox(
@@ -431,7 +445,9 @@ shinyApp(
       reactable(iris)
     })
     output$uo_corrigeer <- renderReactable({
-      reactable(iris)
+      hisco   <- DB_HISCO()
+      matched <- DB_matched()
+      reactable(matched)
     })
     output$uo_stats_matching_percent <- renderUI({
       ds <- uploaded_file_read()
