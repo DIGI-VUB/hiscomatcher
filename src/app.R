@@ -49,9 +49,8 @@ hisco$activiteit           <- hisco$Original
 hisco$activiteit_standard_cleaned  <- txt_standardiser(hisco$activiteit_standard)
 hisco$activiteit_cleaned           <- txt_standardiser(hisco$activiteit)
 
-#hisco                         <- subset(hisco, HISCO > 0 & HISCO < 99999)
-settings$GOLD <- paste.data.frame(data = hisco, term = c("activiteit", "activiteit_standard"), 
-                                  group = c("activiteit_standard_cleaned", "activiteit_cleaned", "HISCO", "STATUS", "RELATION", 
+settings$GOLD <- paste.data.frame(data = hisco, term = c("activiteit", "activiteit_cleaned", "activiteit_standard"), 
+                                  group = c("activiteit_standard_cleaned", "HISCO", "STATUS", "RELATION", 
                                             "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
                                             "SOCPO", "OCC1950", "Release"), 
                                   collapse = "|")
