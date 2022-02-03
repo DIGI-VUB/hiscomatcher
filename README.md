@@ -1,7 +1,6 @@
 # HISCO matcher
 
 - App die beroepen matcht met HISCO beroepen
-- HISCO data beschikbaar in `data/hisco.RData` beschikbaar op https://datasets.iisg.amsterdam/dataset.xhtml?persistentId=hdl:10622/MUZMAL
 - Run the app
 
 ```
@@ -26,6 +25,7 @@ install.packages("RSQLite")
 install.packages("reactable")
 ```
 
+- HISCO data beschikbaar in `data/hisco.RData` beschikbaar op https://datasets.iisg.amsterdam/dataset.xhtml?persistentId=hdl:10622/MUZMAL
 
 ```
 @data{MUZMAL_2018,
