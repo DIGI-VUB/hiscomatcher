@@ -2,6 +2,30 @@
 
 - App die beroepen matcht met HISCO beroepen
 - HISCO data beschikbaar in `data/hisco.RData` beschikbaar op https://datasets.iisg.amsterdam/dataset.xhtml?persistentId=hdl:10622/MUZMAL
+- Run the app
+
+```
+library(shiny)
+runGitHub("hiscomatcher", "digi-vub", subdir = "src")
+```
+
+- Installation: make sure the following packages are installed 
+
+```
+install.packages("shiny")
+install.packages("bs4Dash")
+install.packages("shinydisconnect")
+install.packages("shinyglide")
+install.packages("shinyFiles")
+install.packages("shinyWidgets")
+install.packages("readxl")
+install.packages("udpipe")
+install.packages("data.table")
+install.packages("DT")
+install.packages("RSQLite")
+install.packages("reactable")
+```
+
 
 ```
 @data{MUZMAL_2018,
