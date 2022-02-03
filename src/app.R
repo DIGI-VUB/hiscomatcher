@@ -12,7 +12,7 @@ library(DT)
 library(RSQLite)
 library(reactable)
 
-engine_db <- function(..., DB = settings$DB, FUN = dbListTables){
+engine_db <- function(..., DB = dashdata$DB, FUN = dbListTables){
   con <- dbConnect(RSQLite::SQLite(), DB)
   on.exit({
     dbDisconnect(con)  
@@ -32,11 +32,15 @@ read_matched <- function(){
   if(table_exists("hisco_matched")){
     read_db("select * from hisco_matched")
   }else{
-    data.frame()
+    data.frame(activiteit = character())
   }
 }
 read_hisco <- function(){
-  read_db("select * from hisco_beroepen")
+  x <- read_db("select * from hisco_beroepen")
+  #x$activiteit <- strsplit(x$activiteit, split = "\\|")
+  #x$activiteit_standard <- strsplit(x$activiteit_standard, split = "\\|")
+  x$activiteit_cleaned <- strsplit(x$activiteit_cleaned, split = "\\|")
+  x
 }
 txt_standardiser <- function(x){
   ## Put all in ASCII, lowercase, keep only letters and spaces, no special spaces/punctuation symbols
@@ -48,77 +52,33 @@ txt_standardiser <- function(x){
   x
 }
 
-settings <- list()
-settings$DB <- R_user_dir(package = "hisco", which = "data")
-if(!dir.exists(settings$DB)) dir.create(settings$DB, recursive = TRUE)
-settings$url_hisco            <- "https://iisg.amsterdam/en/data/data-websites/history-of-work"
-settings$url_hisco_data       <- "https://datasets.iisg.amsterdam/dataset.xhtml?persistentId=hdl:10622/MUZMAL"
+dashdata <- list()
+dashdata$DB_home <- R_user_dir(package = "hisco", which = "data")
+dashdata$DB      <- file.path(dashdata$DB_home, "hisco.sqlite")
+dir.create(dashdata$DB_home, recursive = TRUE, showWarnings = FALSE)
+dashdata$url_hisco      <- "https://iisg.amsterdam/en/data/data-websites/history-of-work"
+dashdata$url_hisco_data <- "https://datasets.iisg.amsterdam/dataset.xhtml?persistentId=hdl:10622/MUZMAL"
+dashdata$HISCO_fields   <- c("ID", "Original", "Standard", "HISCO", "STATUS", "RELATION", 
+                             "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
+                             "SOCPO", "OCC1950", "Release")
 load(url("https://github.com/DIGI-VUB/hiscomatcher/raw/master/data/hisco.RData"))
-settings$HISCO_fields <- c("ID", "Original", "Standard", "HISCO", "STATUS", "RELATION", 
-                           "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
-                           "SOCPO", "OCC1950", "Release")
-hisco$activiteit_standard  <- hisco$Standard
-hisco$activiteit           <- hisco$Original
-hisco$activiteit_standard_cleaned  <- txt_standardiser(hisco$activiteit_standard)
-hisco$activiteit_cleaned           <- txt_standardiser(hisco$activiteit)
-
-settings$GOLD <- paste.data.frame(data = hisco, term = c("activiteit", "activiteit_cleaned", "activiteit_standard"), 
+dashdata$HISCO <- hisco
+dashdata$HISCO$activiteit_standard  <- dashdata$HISCO$Standard
+dashdata$HISCO$activiteit           <- dashdata$HISCO$Original
+dashdata$HISCO$activiteit_standard_cleaned  <- txt_standardiser(dashdata$HISCO$activiteit_standard)
+dashdata$HISCO$activiteit_cleaned           <- txt_standardiser(dashdata$HISCO$activiteit)
+dashdata$GOLD <- paste.data.frame(data = dashdata$HISCO, term = c("activiteit", "activiteit_cleaned", "activiteit_standard"), 
                                   group = c("activiteit_standard_cleaned", "HISCO", "STATUS", "RELATION", 
                                             "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
                                             "SOCPO", "OCC1950", "Release"), 
                                   collapse = "|")
 
-settings$DB    <- file.path(settings$DB, "hisco.sqlite")
-settings$HISCO <- hisco
-write_db(name = "hisco", value = settings$HISCO, overwrite = TRUE)
-write_db(name = "hisco_beroepen", value = settings$GOLD, overwrite = TRUE)
+## Save initial values to the database
+write_db(name = "hisco", value = dashdata$HISCO, overwrite = TRUE)
+write_db(name = "hisco_beroepen", value = dashdata$GOLD, overwrite = TRUE)
 
-mod_start <- modalDialog(
-  title = "Welkom",
-  tags$p("Het objectief van deze app is het matchen van beroepen aan de ", tags$a("HISCO", href = settings$url_hisco), " dataset om een gestandaardiseerde set te bekomen van beroepen. 
-  Hoe doe je dit?"),
-  tags$ul(
-    tags$li("Laadt je data met beroepen op in EXCEL/CSV formaat"),
-    tags$li("Er gebeurt een automatische match"),
-    tags$li("Je valideert de matches")
-  ),
-  "De gestandaardiseerde set wordt gesaved en is te vinden op volgende online link.",
-  easyClose = TRUE,
-  footer = NULL
-)
-data_reader <- glide(
-  height = "100%",
-  screen(
-    tags$h4("Data opladen"),
-    p("U kunt hier je data opladen. Dit kan in CSV of EXCEL formaat.",
-      tags$ul(
-        tags$li("De eerste kolom dient een ID te zijn die je wil gebruiken om later terug te linken"),
-        tags$li("de 2e kolom bevat je beroepen die we zullen gebruiken om te matchen aan HISCO")
-      )),
-    shinyFilesButton('ui_upload_file', label = 'Selecteer je bestand', title = 'Selecteer de EXCEL/CSV file', 
-                     multiple = FALSE, icon = icon("file-excel")),
-    uiOutput('ui_uploaded_file'),
-    next_label = "Volgende stap", previous_label = "Vorige stap"#, next_condition = "!is.null(input.ui_upload_file)"
-  ),
-  screen(
-    tags$h4("Selecteer tekst veld(en) met beroepen om te matchen met HISCO"),
-    uiOutput(outputId = "uo_selected_fields"),
-    selectInput("ui_fields", label = "Selecteer andere velden uit je dataset", choices = NULL, multiple = TRUE),
-    dataTableOutput(outputId = "uo_rawdata"),
-    next_label = "Volgende stap", previous_label = "Vorige stap"
-  ),
-  screen(
-    p(tags$h4("Deze tool matcht de beroepen uit je eigen dataset met de HISCO data")),
-    p("Dit gebeurt door"),
-    tags$ul(
-      tags$li("Te kijken naar termen uit de HISCO database die gelijkaardig geschreven zijn als jouw beroepen"),
-      tags$li("Te kijken naar termen uit de HISCO database die semantisch gelijkaardig zijn als jouw beroepen")
-    ),
-    tags$br(),
-    actionButton(inputId = "ui_start_matching", label = "START", status = "success", size = "lg", icon = icon("play")),
-    previous_label = "Vorige stap"
-  )
-)
+
+
 
 
 
@@ -283,7 +243,40 @@ shinyApp(
         tabItem(tabName = "tab_upload", 
                 fluidRow(
                   column(width = 2),
-                  column(width = 8, data_reader),
+                  column(width = 8, 
+                         glide(
+                           height = "100%",
+                           screen(
+                             tags$h4("Data opladen"),
+                             p("U kunt hier je data opladen. Dit kan in CSV of EXCEL formaat.",
+                               tags$ul(
+                                 tags$li("De eerste kolom dient een ID te zijn die je wil gebruiken om later terug te linken"),
+                                 tags$li("de 2e kolom bevat je beroepen die we zullen gebruiken om te matchen aan HISCO")
+                               )),
+                             shinyFilesButton('ui_upload_file', label = 'Selecteer je bestand', title = 'Selecteer de EXCEL/CSV file', 
+                                              multiple = FALSE, icon = icon("file-excel")),
+                             uiOutput('ui_uploaded_file'),
+                             next_label = "Volgende stap", previous_label = "Vorige stap"#, next_condition = "!is.null(input.ui_upload_file)"
+                           ),
+                           screen(
+                             tags$h4("Selecteer tekst veld(en) met beroepen om te matchen met HISCO"),
+                             uiOutput(outputId = "uo_selected_fields"),
+                             selectInput("ui_fields", label = "Selecteer andere velden uit je dataset", choices = NULL, multiple = TRUE),
+                             dataTableOutput(outputId = "uo_rawdata"),
+                             next_label = "Volgende stap", previous_label = "Vorige stap"
+                           ),
+                           screen(
+                             p(tags$h4("Deze tool matcht de beroepen uit je eigen dataset met de HISCO data")),
+                             p("Dit gebeurt door"),
+                             tags$ul(
+                               tags$li("Te kijken naar termen uit de HISCO database die gelijkaardig geschreven zijn als jouw beroepen"),
+                               tags$li("Te kijken naar termen uit de HISCO database die semantisch gelijkaardig zijn als jouw beroepen")
+                             ),
+                             tags$br(),
+                             actionButton(inputId = "ui_start_matching", label = "START", status = "success", size = "lg", icon = icon("play")),
+                             previous_label = "Vorige stap"
+                           )
+                         )),
                   column(width = 2)  
                 ))
       )
@@ -326,7 +319,19 @@ shinyApp(
     title = "bs4Dash Showcase"
   ),
   server = function(input, output, session) {
-    showModal(mod_start)
+    showModal(modalDialog(
+      title = "Welkom",
+      tags$p("Het objectief van deze app is het matchen van beroepen aan de ", tags$a("HISCO", href = dashdata$url_hisco), " dataset om een gestandaardiseerde set te bekomen van beroepen. 
+  Hoe doe je dit?"),
+      tags$ul(
+        tags$li("Laadt je data met beroepen op in EXCEL/CSV formaat"),
+        tags$li("Er gebeurt een automatische match"),
+        tags$li("Je valideert de matches")
+      ),
+      "De gestandaardiseerde set wordt gesaved en is te vinden op volgende online link.",
+      easyClose = TRUE,
+      footer = NULL
+    ))
     dirs <- c(HOME = Sys.getenv("HOME"), 
               USER = Sys.getenv("R_USER"), 
               HOMEDRIVE = Sys.getenv("HOMEDRIVE"), 
@@ -387,7 +392,7 @@ shinyApp(
         )
       }else{
         out <- tags$p(
-          tags$blockquote(icon("columns"), "Selecteer een aantal velden om te matchen met HISCO"),
+          tags$blockquote(icon("columns"), "Selecteer een aantal velden om te matchen met HISCO")
         )
       }
     })
@@ -413,7 +418,7 @@ shinyApp(
     ##
     DB_HISCO <- reactive({
       input$ui_upload_file
-      #ds <- settings$HISCO
+      #ds <- dashdata$HISCO
       ds <- read_hisco()
       ds
     })
@@ -435,11 +440,17 @@ shinyApp(
       #   subtitle = "Aantal records in HISCO",
       #   color = "primary",
       #   icon = icon("cogs"),
-      #   href = settings$url_hisco_data,
-      #   #footer = tags$a("HISCO", href = settings$url_hisco_data),
+      #   href = dashdata$url_hisco_data,
+      #   #footer = tags$a("HISCO", href = dashdata$url_hisco_data),
       #   width = 12
       # )
       #♠infoBox(title = "Aantal records", subtitle = "in jouw dataset", value = n, color = "info", icon = icon("database"), width = 12, elevation = 4)
+    })
+    matching_data <- reactive({
+      userdata <- uploaded_file_read()
+      hisco    <- DB_HISCO()
+      matched  <- DB_matched()
+      list(hisco = hisco, userdata = userdata, matched = matched)
     })
     output$uo_valideer <- renderReactable({
       reactable(iris)
@@ -450,14 +461,15 @@ shinyApp(
       reactable(matched)
     })
     output$uo_stats_matching_percent <- renderUI({
-      ds <- uploaded_file_read()
+      x <- matching_data()
+      print(str(x))
       descriptionBlock(
-        number = "18%",
-        numberColor = "danger",
-        numberIcon = icon("caret-down"),
-        header = "1200",
+        number = paste(round(nrow(x$userdata) / nrow(x$matched), 1), "%", sep = ""),
+        numberColor = "success",
+        #numberIcon = icon("caret-up"),
+        header = nrow(x$matched),
         text = "Aantal gematcht",
-        rightBorder = FALSE,
+        rightBorder = TRUE,
         marginBottom = FALSE
       )
     })
