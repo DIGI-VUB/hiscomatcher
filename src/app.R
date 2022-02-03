@@ -4,7 +4,6 @@ library(shinydisconnect)
 library(shinyglide)
 library(shinyFiles)
 library(readxl)
-library(Microsoft365R)
 library(tools)
 library(udpipe)
 library(data.table)
@@ -36,7 +35,7 @@ read_matched <- function(){
   }
 }
 read_hisco <- function(){
-  x <- read_db("select * from hisco_beroepen")
+  x <- read_db("select * from hisco_gold")
   #x$activiteit <- strsplit(x$activiteit, split = "\\|")
   #x$activiteit_standard <- strsplit(x$activiteit_standard, split = "\\|")
   x$activiteit_cleaned <- strsplit(x$activiteit_cleaned, split = "\\|")
@@ -58,7 +57,7 @@ dashdata$DB      <- file.path(dashdata$DB_home, "hisco.sqlite")
 dir.create(dashdata$DB_home, recursive = TRUE, showWarnings = FALSE)
 dashdata$url_hisco      <- "https://iisg.amsterdam/en/data/data-websites/history-of-work"
 dashdata$url_hisco_data <- "https://datasets.iisg.amsterdam/dataset.xhtml?persistentId=hdl:10622/MUZMAL"
-dashdata$HISCO_fields   <- c("ID", "Original", "Standard", "HISCO", "STATUS", "RELATION", 
+dashdata$HISCO_fields   <- c("Original", "Standard", "HISCO", "STATUS", "RELATION", 
                              "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
                              "SOCPO", "OCC1950", "Release")
 load(url("https://github.com/DIGI-VUB/hiscomatcher/raw/master/data/hisco.RData"))
@@ -67,19 +66,44 @@ dashdata$HISCO$activiteit_standard  <- dashdata$HISCO$Standard
 dashdata$HISCO$activiteit           <- dashdata$HISCO$Original
 dashdata$HISCO$activiteit_standard_cleaned  <- txt_standardiser(dashdata$HISCO$activiteit_standard)
 dashdata$HISCO$activiteit_cleaned           <- txt_standardiser(dashdata$HISCO$activiteit)
-dashdata$GOLD <- paste.data.frame(data = dashdata$HISCO, term = c("activiteit", "activiteit_cleaned", "activiteit_standard"), 
-                                  group = c("activiteit_standard_cleaned", "HISCO", "STATUS", "RELATION", 
+dashdata$HISCO$ID_GOLD <- as.integer(factor(dashdata$HISCO$activiteit_standard_cleaned))
+dashdata$GOLD <- paste.data.frame(data = dashdata$HISCO, term = c("activiteit", "activiteit_cleaned", "activiteit_standard", "Original", "Standard"), 
+                                  group = c("ID_GOLD", "activiteit_standard_cleaned", "HISCO", "STATUS", "RELATION", 
                                             "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
                                             "SOCPO", "OCC1950", "Release"), 
                                   collapse = "|")
 
 ## Save initial values to the database
 write_db(name = "hisco", value = dashdata$HISCO, overwrite = TRUE)
-write_db(name = "hisco_beroepen", value = dashdata$GOLD, overwrite = TRUE)
+write_db(name = "hisco_gold", value = dashdata$GOLD, overwrite = TRUE)
 
+x <- read_hisco()
+x <- as.data.table(x[, c("ID_GOLD", "activiteit_cleaned")])
+x <- x[, lapply(.SD, unlist), by = list(ID_GOLD), .SDcols = "activiteit_cleaned"]
+x <- subset(x)
 
-
-
+match_exact <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
+  ## BASIS term: activiteit_standard_cleaned
+  #GOLD$ID_GOLD
+  #GOLD$activiteit_standard_cleaned
+  #GOLD$activiteit_cleaned
+  GOLD_act <- as.data.table(GOLD[, c("ID_GOLD", "activiteit_cleaned")])
+  GOLD_act <- GOLD_act[, lapply(.SD, unlist), by = list(ID_GOLD), .SDcols = "activiteit_cleaned"]
+  #activiteit_standard_cleaned: naam van gestandaardiseerde activiteit
+  #activiteit_cleaned: list of namen van activiteit varianten
+  x$.match <- rep(NA_integer_, nrow(x))
+  for(field in fields){
+    ## exact match on standard 
+    x$.match_standard <- txt_recode(x[[fields]], from = GOLD$activiteit_standard_cleaned, to = GOLD$ID_GOLD, na.rm = TRUE)
+    ## exact match on all variants
+    x$.match_variant  <- txt_recode(x[[fields]], from = GOLD_act$activiteit_cleaned, to = GOLD_act$ID_GOLD, na.rm = TRUE)
+    x$.match          <- ifelse(is.na(x$.match), ifelse(is.na(x$.match_standard), x$.match_variant, x$.match_standard), x$.match)
+  }
+  x$HISCO_MATCH <- txt_recode(x$.match, from = VARIANTS$ID_GOLD, to = VARIANTS$Standard, na.rm = TRUE)
+  x <- merge(x, GOLD, by.x = ".match", by.y = "ID_GOLD", sort = FALSE, all.x = TRUE)
+  x <- x[order(x$.rowid, decreasing = FALSE), ]
+  x
+}
 
 
 shinyApp(
@@ -177,50 +201,40 @@ shinyApp(
       ),
       tabItems(
         tabItem(tabName = "tab_start_matching", 
-                fluidPage(title = "TEST",
+                fluidPage(title = "MATCHING",
                           fluidRow(
                             column(
-                              width = 8,
+                              width = 10,
                               tabBox(
                                 ribbon(
                                   text = "Matching",
                                   color = "pink"
                                 ),
                                 elevation = 2,
-                                id = "tabcard1",
+                                id = "tabmatching",
                                 width = 12,
                                 collapsible = FALSE, 
                                 closable = FALSE,
                                 type = "tabs",
                                 status = "primary",
                                 solidHeader = TRUE,
-                                selected = "Valideer",
-                                tabPanel(title = "Valideer",
+                                selected = "Exact gematcht",
+                                tabPanel(title = "Exact gematcht",
+                                         tags$blockquote("Deze dataset toont termen die exact konden gematcht worden"),
+                                         reactableOutput(outputId = "uo_exact")
+                                ),
+                                tabPanel(title = "Te Valideren",
+                                         tags$blockquote("Deze dataset toont termen die niet 100% exact konden gematcht worden en dus validatie vereisen"),
                                          reactableOutput(outputId = "uo_valideer")
-                                         
                                 ),
                                 tabPanel(title = "Corrigeer",
                                          reactableOutput(outputId = "uo_corrigeer")
                                 )
                               )
                             ),
-                            column(width = 4,
-                                   box(
-                                     solidHeader = FALSE,
-                                     title = "Data",
-                                     width = 12,
-                                     status = "success",
-                                     footer = fluidRow(
-                                       column(
-                                         width = 6,
-                                         uiOutput(outputId = "uo_stats_records_own")
-                                       ),
-                                       column(
-                                         width = 6,
-                                         uiOutput(outputId = "uo_stats_records_hisco")
-                                       )
-                                     )
-                                   ),
+                            column(width = 2,
+                                   uiOutput(outputId = "uo_stats_records_own"),
+                                   uiOutput(outputId = "uo_stats_records_hisco"),
                                    box(
                                      solidHeader = FALSE,
                                      title = "Match progress",
@@ -281,33 +295,24 @@ shinyApp(
                 ))
       )
     ),
-    # controlbar = dashboardControlbar(
-    #   id = "controlbar",
-    #   skin = "light",
-    #   pinned = TRUE,
-    #   overlay = FALSE,
-    #   controlbarMenu(
-    #     id = "controlbarMenu",
-    #     type = "pills",
-    #     controlbarItem(
-    #       "Inputs",
-    #       column(
-    #         width = 12,
-    #         align = "center",
-    #         radioButtons(
-    #           inputId = "dist",
-    #           label = "Distribution type:",
-    #           c(
-    #             "Normal" = "norm",
-    #             "Uniform" = "unif",
-    #             "Log-normal" = "lnorm",
-    #             "Exponential" = "exp"
-    #           )
-    #         )
-    #       )
-    #     )
-    #   )
-    # ),
+    controlbar = dashboardControlbar(
+      id = "controlbar",
+      skin = "light",
+      pinned = TRUE,
+      overlay = FALSE,
+      controlbarMenu(
+        id = "controlbarMenu",
+        type = "pills",
+        controlbarItem(
+          "Algemene settings",
+          column(
+            width = 12,
+            align = "center",
+            sliderInput(inputId = "ui_matching_stringdist_topn", min = 1, max = 25, value = 7, label = "Toon top-n matches")
+          )
+        )
+      )
+    ),
     footer = dashboardFooter(
       fixed = FALSE,
       left = a(
@@ -362,7 +367,9 @@ shinyApp(
       }else{
         d <- data.frame()
       }
-      list(data = d, fields = colnames(d), field_content = tail(head(colnames(d), n = 2), n = 1))
+      out <- list(data = d, fields = colnames(d), field_content = tail(head(colnames(d), n = 2), n = 1))
+      out$data$.rowid <- seq_len(nrow(out$data))
+      out
     })
     output$uo_rawdata <- renderDataTable({
       ds <- uploaded_file_read()
@@ -416,6 +423,12 @@ shinyApp(
     ##################################################################################v
     ## UI of matching
     ##
+    uploaded_file_matchinfo <- reactive({
+      userdata <- uploaded_file_read()
+      match_on <- input$ui_fields
+      top_n <- input$ui_matching_stringdist_topn 
+      list(userdata = userdata, match_on = match_on, top_n = top_n)
+    })
     DB_HISCO <- reactive({
       input$ui_upload_file
       #ds <- dashdata$HISCO
@@ -435,22 +448,20 @@ shinyApp(
       ds <- DB_HISCO()
       n  <- nrow(ds)
       infoBox(title = "Aantal records", subtitle = "in HISCO", value = n, color = "info", icon = icon("sliders-h"), width = 12, elevation = 4)
-      # valueBox(
-      #   value = n,
-      #   subtitle = "Aantal records in HISCO",
-      #   color = "primary",
-      #   icon = icon("cogs"),
-      #   href = dashdata$url_hisco_data,
-      #   #footer = tags$a("HISCO", href = dashdata$url_hisco_data),
-      #   width = 12
-      # )
-      #♠infoBox(title = "Aantal records", subtitle = "in jouw dataset", value = n, color = "info", icon = icon("database"), width = 12, elevation = 4)
     })
     matching_data <- reactive({
       userdata <- uploaded_file_read()
       hisco    <- DB_HISCO()
       matched  <- DB_matched()
       list(hisco = hisco, userdata = userdata, matched = matched)
+    })
+    output$uo_exact <- renderReactable({
+      matchinfo <- uploaded_file_matchinfo()
+      hisco     <- DB_HISCO()
+      x         <- match_exact(matchinfo$userdata$data, GOLD = hisco, fields = matchinfo$match_on)
+      x         <- subset(x, !is.na(HISCO), select = c("HISCO_MATCH", matchinfo$userdata$fields, setdiff(dashdata$HISCO_fields, c("Original", "Standard"))))
+      #print(str(x))
+      reactable(x, sortable = TRUE, filterable = TRUE, searchable = TRUE)
     })
     output$uo_valideer <- renderReactable({
       reactable(iris)
@@ -462,7 +473,6 @@ shinyApp(
     })
     output$uo_stats_matching_percent <- renderUI({
       x <- matching_data()
-      print(str(x))
       descriptionBlock(
         number = paste(round(nrow(x$userdata) / nrow(x$matched), 1), "%", sep = ""),
         numberColor = "success",
