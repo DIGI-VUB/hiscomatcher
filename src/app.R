@@ -3,6 +3,7 @@ library(bs4Dash)
 library(shinydisconnect)
 library(shinyglide)
 library(shinyFiles)
+library(shinyWidgets)
 library(readxl)
 library(tools)
 library(udpipe)
@@ -99,7 +100,7 @@ match_exact <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
     x$.match_variant  <- txt_recode(x[[fields]], from = GOLD_act$activiteit_cleaned, to = GOLD_act$ID_GOLD, na.rm = TRUE)
     x$.match          <- ifelse(is.na(x$.match), ifelse(is.na(x$.match_standard), x$.match_variant, x$.match_standard), x$.match)
   }
-  x$HISCO_MATCH <- txt_recode(x$.match, from = VARIANTS$ID_GOLD, to = VARIANTS$Standard, na.rm = TRUE)
+  x$.MATCH <- txt_recode(x$.match, from = VARIANTS$ID_GOLD, to = VARIANTS$Standard, na.rm = TRUE)
   x <- merge(x, GOLD, by.x = ".match", by.y = "ID_GOLD", sort = FALSE, all.x = TRUE)
   x <- x[order(x$.rowid, decreasing = FALSE), ]
   x
@@ -108,6 +109,7 @@ match_exact <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
 
 shinyApp(
   ui = dashboardPage(
+    title = "HISCO MATCHER",
     dark = FALSE,
     header = dashboardHeader(
       title = dashboardBrand(
@@ -161,29 +163,8 @@ shinyApp(
         ),
         sidebarHeader("Resultaat"),
         menuItem(
-          text = "DATA",
-          icon = icon("cubes"),
-          startExpanded = TRUE,
-          menuSubItem(
-            text = HTML(
-              paste(
-                "Export",
-                dashboardBadge(
-                  ">>",
-                  position = "right",
-                  color = "success"
-                )
-              )
-            ),
-            tabName = "tab_export",
-            icon = icon("circle")
-          ),
-          menuSubItem(
-            text = HTML("HISCO Categorieen"),
-            tabName = "tab_hisco_categories",
-            icon = icon("circle")
-            
-          )
+          text = "Data Export",
+          icon = icon("cubes")
         )
       )
     ),
@@ -220,7 +201,9 @@ shinyApp(
                                 solidHeader = TRUE,
                                 selected = "Exact gematcht",
                                 tabPanel(title = "Exact gematcht",
-                                         tags$blockquote("Deze dataset toont termen die exact konden gematcht worden"),
+                                         tags$blockquote("Deze dataset toont termen die exact konden gematcht worden (ofwel adhv de standaard of variant)"),
+                                         checkboxGroupButtons(inputId = "ui_groupby", label = "Groepeer volgens", status = "primary", 
+                                                              choices = c("Geen", setdiff(dashdata$HISCO_fields, c("Original", "Standard"))), selected = NULL),
                                          reactableOutput(outputId = "uo_exact")
                                 ),
                                 tabPanel(title = "Te Valideren",
@@ -243,13 +226,13 @@ shinyApp(
                                      status = "info",
                                      footer = fluidRow(
                                        column(
-                                         width = 6,
+                                         width = 12,
                                          uiOutput(outputId = "uo_stats_matching_percent")
                                        ),
-                                       column(
-                                         width = 6,
-                                         uiOutput(outputId = "uo_stats_matching_todo")
-                                       )
+                                       #column(
+                                       #  width = 6,
+                                       #   uiOutput(outputId = "uo_stats_matching_todo")
+                                       #)
                                      )
                                    ))  
                           )
@@ -319,9 +302,8 @@ shinyApp(
         href = "https://digi.research.vub.be/",
         target = "_blank", "DIGI VUB"
       ),
-      right = "2022"
-    ),
-    title = "bs4Dash Showcase"
+      right = paste("2022", "using database at", dashdata$DB)
+    )
   ),
   server = function(input, output, session) {
     showModal(modalDialog(
@@ -455,16 +437,47 @@ shinyApp(
       matched  <- DB_matched()
       list(hisco = hisco, userdata = userdata, matched = matched)
     })
-    output$uo_exact <- renderReactable({
+    matcher <- reactive({
       matchinfo <- uploaded_file_matchinfo()
       hisco     <- DB_HISCO()
       x         <- match_exact(matchinfo$userdata$data, GOLD = hisco, fields = matchinfo$match_on)
-      x         <- subset(x, !is.na(HISCO), select = c("HISCO_MATCH", matchinfo$userdata$fields, setdiff(dashdata$HISCO_fields, c("Original", "Standard"))))
-      #print(str(x))
-      reactable(x, sortable = TRUE, filterable = TRUE, searchable = TRUE)
+      list(exact = x, hisco = hisco, matchinfo = matchinfo)
+    })
+    output$uo_exact <- renderReactable({
+      ds <- matcher()
+      matchinfo <- ds$matchinfo
+      show_hisco_fields <- setdiff(dashdata$HISCO_fields, c("Original", "Standard"))
+      x <- subset(ds$exact, !is.na(HISCO), select = c(".MATCH", matchinfo$userdata$fields, show_hisco_fields))
+      groupby <- NULL
+      if(length(input$ui_groupby) > 0){
+        groupby   <- input$ui_groupby    
+        if("Geen" %in% groupby){
+          groupby   <- NULL
+        }
+      }
+      if(nrow(x) > 0){
+        reactable(x, 
+                  sortable = TRUE, filterable = TRUE, searchable = TRUE, resizable = TRUE, 
+                  showPageSizeOptions = TRUE, pageSizeOptions = c(3, 5, 10, 15, 20, 50, 100, 1000), defaultPageSize = 5,
+                  borderless = TRUE,
+                  groupBy = groupby, defaultColDef = colDef(aggregate = "unique"),
+                  columnGroups = list(
+                    colGroup(name = "MATCH", columns = ".MATCH", align = "left", headerStyle = list(fontWeight = 700)),
+                    colGroup(name = "Uw data", columns = matchinfo$userdata$fields, align = "left", headerStyle = list(fontWeight = 700)),
+                    colGroup(name = "HISCO data", columns = show_hisco_fields, align = "left", headerStyle = list(fontWeight = 700))
+                  )) 
+      }
     })
     output$uo_valideer <- renderReactable({
-      reactable(iris)
+      reactable(iris,
+                sortable = TRUE, filterable = TRUE, searchable = TRUE, resizable = TRUE, 
+                showPageSizeOptions = TRUE, pageSizeOptions = c(3, 5, 10, 15, 20, 50, 100, 1000), defaultPageSize = 10,
+                borderless = TRUE,
+                selection = "multiple",
+                onClick = "select", 
+                theme = reactableTheme(
+                  rowSelectedStyle = list(backgroundColor = "#eee", boxShadow = "inset 2px 0 0 0 #ffa62d")
+                ))
     })
     output$uo_corrigeer <- renderReactable({
       hisco   <- DB_HISCO()
@@ -473,12 +486,14 @@ shinyApp(
     })
     output$uo_stats_matching_percent <- renderUI({
       x <- matching_data()
+      matched <- matcher()
+      aantal_exact <- sum(!is.na(matched$exact$HISCO))
       descriptionBlock(
-        number = paste(round(nrow(x$userdata) / nrow(x$matched), 1), "%", sep = ""),
+        number = paste(round(100 * aantal_exact / nrow(x$userdata$data), 1), "%", sep = ""),
         numberColor = "success",
         #numberIcon = icon("caret-up"),
-        header = nrow(x$matched),
-        text = "Aantal gematcht",
+        header = aantal_exact,
+        text = "Aantal exact gematcht",
         rightBorder = TRUE,
         marginBottom = FALSE
       )
