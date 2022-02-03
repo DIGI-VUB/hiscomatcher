@@ -1,6 +1,9 @@
 # HISCO matcher
 
 - App die beroepen matcht met HISCO beroepen
+
+![](doc/img/screenshot.png)
+
 - Run the app
 
 ```
