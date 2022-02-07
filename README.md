@@ -21,11 +21,13 @@ install.packages("shinyglide")
 install.packages("shinyFiles")
 install.packages("shinyWidgets")
 install.packages("readxl")
+install.packages("writexl")
 install.packages("udpipe")
 install.packages("data.table")
 install.packages("DT")
 install.packages("RSQLite")
 install.packages("reactable")
+install.packages("stringdist")
 ```
 
 - HISCO data beschikbaar in `data/hisco.RData` beschikbaar op https://datasets.iisg.amsterdam/dataset.xhtml?persistentId=hdl:10622/MUZMAL

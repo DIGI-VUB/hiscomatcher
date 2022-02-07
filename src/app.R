@@ -5,12 +5,15 @@ library(shinyglide)
 library(shinyFiles)
 library(shinyWidgets)
 library(readxl)
+library(writexl)
 library(tools)
 library(udpipe)
 library(data.table)
 library(DT)
 library(RSQLite)
 library(reactable)
+library(stringdist)
+
 
 engine_db <- function(..., DB = dashdata$DB, FUN = dbListTables){
   con <- dbConnect(RSQLite::SQLite(), DB)
@@ -78,10 +81,10 @@ dashdata$GOLD <- paste.data.frame(data = dashdata$HISCO, term = c("activiteit", 
 write_db(name = "hisco", value = dashdata$HISCO, overwrite = TRUE)
 write_db(name = "hisco_gold", value = dashdata$GOLD, overwrite = TRUE)
 
-x <- read_hisco()
-x <- as.data.table(x[, c("ID_GOLD", "activiteit_cleaned")])
-x <- x[, lapply(.SD, unlist), by = list(ID_GOLD), .SDcols = "activiteit_cleaned"]
-x <- subset(x)
+# x <- read_hisco()
+# x <- as.data.table(x[, c("ID_GOLD", "activiteit_cleaned")])
+# x <- x[, lapply(.SD, unlist), by = list(ID_GOLD), .SDcols = "activiteit_cleaned"]
+# x <- subset(x)
 
 match_exact <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
   ## BASIS term: activiteit_standard_cleaned
@@ -94,10 +97,13 @@ match_exact <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
   #activiteit_cleaned: list of namen van activiteit varianten
   x$.match <- rep(NA_integer_, nrow(x))
   for(field in fields){
+    field_first <- x[[field]]
+    field_first <- strsplit(field_first, split = ";")
+    field_first <- sapply(field_first, FUN = function(x) head(x, n = 1))
     ## exact match on standard 
-    x$.match_standard <- txt_recode(x[[fields]], from = GOLD$activiteit_standard_cleaned, to = GOLD$ID_GOLD, na.rm = TRUE)
+    x$.match_standard <- txt_recode(field_first, from = GOLD$activiteit_standard_cleaned, to = GOLD$ID_GOLD, na.rm = TRUE)
     ## exact match on all variants
-    x$.match_variant  <- txt_recode(x[[fields]], from = GOLD_act$activiteit_cleaned, to = GOLD_act$ID_GOLD, na.rm = TRUE)
+    x$.match_variant  <- txt_recode(field_first, from = GOLD_act$activiteit_cleaned, to = GOLD_act$ID_GOLD, na.rm = TRUE)
     x$.match          <- ifelse(is.na(x$.match), ifelse(is.na(x$.match_standard), x$.match_variant, x$.match_standard), x$.match)
   }
   x$.MATCH <- txt_recode(x$.match, from = VARIANTS$ID_GOLD, to = VARIANTS$Standard, na.rm = TRUE)
@@ -105,6 +111,71 @@ match_exact <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
   x <- x[order(x$.rowid, decreasing = FALSE), ]
   x
 }
+match_stringdist <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
+  top_n <- function(x, n = 10){
+    x <- x[order(x$afstand, decreasing = FALSE), ]
+    x <- head(x, n = n)
+    x
+  }
+  GOLD_act <- as.data.table(GOLD[, c("ID_GOLD", "activiteit_cleaned")])
+  GOLD_act <- GOLD_act[, lapply(.SD, unlist), by = list(ID_GOLD), .SDcols = "activiteit_cleaned"]
+  #activiteit_standard_cleaned: naam van gestandaardiseerde activiteit
+  #activiteit_cleaned: list of namen van activiteit varianten
+  matches <- list()
+  for(idx in seq_len(nrow(x))){
+    if((idx %% 50) == 0) cat(sprintf("%s %s/%s", Sys.time(), idx, nrow(x)), sep = "\n")
+    .rowid <- x$.rowid[idx]
+    el <- list()
+    for(field in fields){
+      host  <- x[[field]][idx]
+      host  <- strsplit(host, split = ";")
+      host  <- head(unlist(host, use.names = FALSE), n = 1)
+      woord <- txt_standardiser(host)
+      
+      afstanden <- list()
+      ## stringdist on standard 
+      afstanden$standardised <- stringdist(woord, GOLD$activiteit_standard_cleaned, method = "osa")
+      afstanden$standardised <- data.frame(.rowid = .rowid, 
+                                           #host = host, 
+                                           ID_GOLD = GOLD$ID_GOLD,
+                                           GOLD = GOLD$activiteit_standard_cleaned,
+                                           ON = field,
+                                           afstand = afstanden$standardised, 
+                                           stringsAsFactors = FALSE)
+      ## stringdist on all variants
+      afstanden$variants <- stringdist(woord, GOLD_act$activiteit_cleaned, method = "osa")
+      afstanden$variants <- data.frame(.rowid = .rowid, 
+                                       #host = host, 
+                                       ID_GOLD = GOLD_act$ID_GOLD,
+                                       GOLD = GOLD_act$activiteit_cleaned,
+                                       ON = field,
+                                       afstand = afstanden$variants, 
+                                       stringsAsFactors = FALSE)
+      afstanden <- lapply(afstanden, FUN = function(x){
+        top_n(x, n = 10) 
+      })
+      afstanden <- rbindlist(afstanden)
+      afstanden <- top_n(afstanden, n = 10)
+      el[[field]] <- afstanden
+    }
+    el <- rbindlist(el)
+    el <- top_n(el, n = 10)
+    matches[[idx]] <- el
+  }
+  matches <- rbindlist(matches)
+  x <- merge(x, matches, by.x = ".rowid", by.y = ".rowid", sort = FALSE, all.x = TRUE)
+  x <- x[order(x$.rowid, x$afstand, decreasing = FALSE), ]
+  x
+}
+
+# d <- readxl::read_excel(path = "C:/Users/Jan/Desktop/1 Basislijst beroepen Nederlands.xlsx", sheet = 1, na = "", trim_ws = TRUE, guess_max = floor(.Machine$integer.max/100))
+# d$.rowid <- seq_len(nrow(d))
+# 
+# z <- match_exact(d, GOLD = dashdata$HISCO, fields = c("Kopie van bronbestand", "Gestandaardiseerde beroepstitel"))
+# z <- subset(d, d$.rowid %in% z$.rowid[is.na(z$.MATCH)])
+# z <- head(z, 100)
+# z <- match_stringdist(x = z, fields = c("Kopie van bronbestand", "Gestandaardiseerde beroepstitel"), GOLD = dashdata$GOLD, VARIANTS = dashdata$HISCO)
+
 
 
 shinyApp(
@@ -165,7 +236,8 @@ shinyApp(
         menuItem(
           text = "Data Export",
           icon = icon("cubes")
-        )
+        ),
+        downloadButton(outputId = "uo_download_results", label = "Export")
       )
     ),
     body = dashboardBody(
@@ -408,7 +480,7 @@ shinyApp(
     uploaded_file_matchinfo <- reactive({
       userdata <- uploaded_file_read()
       match_on <- input$ui_fields
-      top_n <- input$ui_matching_stringdist_topn 
+      top_n    <- input$ui_matching_stringdist_topn 
       list(userdata = userdata, match_on = match_on, top_n = top_n)
     })
     DB_HISCO <- reactive({
@@ -437,14 +509,14 @@ shinyApp(
       matched  <- DB_matched()
       list(hisco = hisco, userdata = userdata, matched = matched)
     })
-    matcher <- reactive({
+    matcher_exact <- reactive({
       matchinfo <- uploaded_file_matchinfo()
       hisco     <- DB_HISCO()
       x         <- match_exact(matchinfo$userdata$data, GOLD = hisco, fields = matchinfo$match_on)
       list(exact = x, hisco = hisco, matchinfo = matchinfo)
     })
     output$uo_exact <- renderReactable({
-      ds <- matcher()
+      ds <- matcher_exact()
       matchinfo <- ds$matchinfo
       show_hisco_fields <- setdiff(dashdata$HISCO_fields, c("Original", "Standard"))
       x <- subset(ds$exact, !is.na(HISCO), select = c(".MATCH", matchinfo$userdata$fields, show_hisco_fields))
@@ -486,7 +558,7 @@ shinyApp(
     })
     output$uo_stats_matching_percent <- renderUI({
       x <- matching_data()
-      matched <- matcher()
+      matched <- matcher_exact()
       aantal_exact <- sum(!is.na(matched$exact$HISCO))
       descriptionBlock(
         number = paste(round(100 * aantal_exact / nrow(x$userdata$data), 1), "%", sep = ""),
@@ -498,6 +570,39 @@ shinyApp(
         marginBottom = FALSE
       )
     })
+    outputdataset <- reactive({
+      x <- matching_data()
+      matched <- matcher_exact()
+      m <- list(HISCO = dashdata$HISCO, GOLD = dashdata$GOLD)
+      if(is.data.frame(matched$exact) && nrow(matched$exact) > 0){
+        fields  <- c(uploaded_file_read()$fields, dashdata$HISCO_fields)
+        matched <- matched$exact
+        matched <- matched[, intersect(colnames(matched), fields)]
+        #print(list(class(matched), class(dashdata$HISCO), class(dashdata$GOLD)))
+        if(nrow(matched) > 0){
+          m$MATCHED <- matched
+        }
+      }
+      m <- m[intersect(c("MATCHED", "HISCO"), names(m))]
+      m 
+    })
+    output$uo_download_results <- downloadHandler(
+      filename = function() {
+        paste('hisco_matcher_', Sys.Date(), '.xlsx', sep = '')
+      },
+      content = function(con) {
+        d <- outputdataset()
+        showModal(modalDialog("Data wordt in 1 excel file gestopt, ogenblikje geduld. Deze popup sluit automatisch wanneer dit afgerond is.", easyClose = FALSE, footer = NULL))
+        on.exit(removeModal())
+        d <- lapply(d, FUN = function(x){
+          x <- setDF(x)
+          fields <- sapply(x, is.character)
+          x[, fields] <- apply(x[, fields, drop = FALSE], MARGIN = 2, FUN = function(x) substr(x, start = 1, stop = 32766))
+          x
+        })
+        write_xlsx(d, path = con)
+      }
+    )
     shinyFileChoose(input, id = 'ui_upload_file', roots = dirs, filetypes = c('csv', 'xlsx', 'xls'))
     observeEvent(input$current_tab, {
       if (input$current_tab == "tab_upload") {
