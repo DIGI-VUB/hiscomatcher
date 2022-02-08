@@ -676,7 +676,6 @@ shinyApp(
     observe({
       i <- input$save_row
       removeModal()
-      print(str(i))
       isolate({
         x <- get_next()  
         x <- x[i$index, ]
