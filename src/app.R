@@ -122,14 +122,15 @@ match_exact <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
   x <- x[order(x$.rowid, decreasing = FALSE), ]
   x
 }
-match_stringdist <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
-  top_n <- function(x, n = 10){
+match_stringdist <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO, top_n = 10){
+  closest <- function(x, top_n = 10){
     x <- x[order(x$afstand, decreasing = FALSE), ]
-    x <- head(x, n = n)
+    x <- head(x, n = top_n)
     x
   }
   GOLD_act <- as.data.table(GOLD[, c("ID_GOLD", "activiteit_cleaned")])
   GOLD_act <- GOLD_act[, lapply(.SD, unlist), by = list(ID_GOLD), .SDcols = "activiteit_cleaned"]
+  GOLD_act <- subset(GOLD_act, !activiteit_cleaned %in% GOLD$activiteit_standard_cleaned)
   #activiteit_standard_cleaned: naam van gestandaardiseerde activiteit
   #activiteit_cleaned: list of namen van activiteit varianten
   matches <- list()
@@ -163,14 +164,16 @@ match_stringdist <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
                                        afstand = afstanden$variants, 
                                        stringsAsFactors = FALSE)
       afstanden <- lapply(afstanden, FUN = function(x){
-        top_n(x, n = 10) 
+        closest(x, top_n = top_n) 
       })
       afstanden <- rbindlist(afstanden)
-      afstanden <- top_n(afstanden, n = 10)
+      afstanden <- closest(afstanden, top_n = top_n)
       el[[field]] <- afstanden
     }
     el <- rbindlist(el)
-    el <- top_n(el, n = 10)
+    el <- el[order(el$afstand, el$GOLD, decreasing = FALSE), ]
+    el <- el[!duplicated(el$GOLD), ]
+    el <- closest(el, top_n = top_n)
     matches[[idx]] <- el
   }
   matches <- rbindlist(matches)
@@ -290,10 +293,18 @@ shinyApp(
                                          reactableOutput(outputId = "uo_exact")
                                 ),
                                 tabPanel(title = "Te Valideren",
-                                         tags$blockquote("Deze dataset toont termen die niet 100% exact konden gematcht worden en dus validatie vereisen. Selecteer die links, zoek die al hij er niet bij staat of zeg vind hem niet."),
-                                         actionButton(inputId = "ui_zoek", label = "Zoek", icon = icon("search")),
+                                         tags$blockquote("Deze dataset toont termen die niet 100% exact konden gematcht worden en dus validatie vereisen. We tonen HISCO beroepen die gelijkaardig zijn via de Levehnstein afstand met jouw beroepen. Selecteer links welke correct is. Die selectie wordt dan bewaard en de app laadt dan de volgende te valideren match."),
+                                         #actionButton(inputId = "ui_zoek", label = "Zoek", icon = icon("search")),
                                          actionButton(inputId = "ui_skip", label = "Sla over", icon = icon("fast-forward")),
                                          actionButton(inputId = "ui_toon_werk", label = "Toon reeds gevalideerde"),
+                                         searchInput(
+                                           inputId = "ui_zoek", 
+                                           label = "Zoek zelf in HISCO:", 
+                                           placeholder = "zet je zoekterm hier", 
+                                           btnSearch = icon("search"), 
+                                           btnReset = icon("remove"), 
+                                           width = "30%"
+                                         ),
                                          reactableOutput(outputId = "uo_valideer")
                                 )
                               )
@@ -374,7 +385,7 @@ shinyApp(
           column(
             width = 12,
             align = "center",
-            sliderInput(inputId = "ui_matching_stringdist_topn", min = 1, max = 25, value = 7, label = "Toon top-n matches")
+            sliderInput(inputId = "ui_matching_stringdist_topn", min = 1, max = 5000, value = 250, label = "Toon top-n matches")
           )
         )
       )
@@ -411,6 +422,7 @@ shinyApp(
     ##################################################################################v
     ## UI of data uploading
     ##
+    shinyFileChoose(input, id = 'ui_upload_file', roots = dirs, filetypes = c('csv', 'xlsx', 'xls'))
     uploaded_file <- reactive({
       path <- parseFilePaths(dirs, input$ui_upload_file)
       if(nrow(path) > 0){
@@ -528,6 +540,10 @@ shinyApp(
     matcher_exact <- reactive({
       matchinfo <- uploaded_file_matchinfo()
       hisco     <- DB_HISCO()
+      if(nrow(matchinfo$userdata$data) > 0){
+        showModal(modalDialog("Zoekt naar zo goed als exacte matches tussen HISCO en jouw dataset", footer = NULL))
+        on.exit({removeModal()})  
+      }
       x         <- match_exact(matchinfo$userdata$data, GOLD = hisco, fields = matchinfo$match_on)
       list(rawdata = matchinfo$userdata$data, exact = x, hisco = hisco, matchinfo = matchinfo)
     })
@@ -544,11 +560,16 @@ shinyApp(
         }
       }
       if(nrow(x) > 0){
+        lst <- list(.MATCH = colDef(name = "HISCO", minWidth = 200))
+        for(i in matchinfo$match_on){
+          lst[[i]] <- colDef(minWidth = 200)
+        }
         reactable(x, 
                   sortable = TRUE, filterable = TRUE, searchable = TRUE, resizable = TRUE, 
                   showPageSizeOptions = TRUE, pageSizeOptions = c(3, 5, 10, 15, 20, 50, 100, 1000), defaultPageSize = 5,
                   borderless = TRUE,
                   groupBy = groupby, defaultColDef = colDef(aggregate = "unique"),
+                  columns = lst,
                   columnGroups = list(
                     colGroup(name = "MATCH", columns = ".MATCH", align = "left", headerStyle = list(fontWeight = 700)),
                     colGroup(name = "Uw data", columns = matchinfo$userdata$fields, align = "left", headerStyle = list(fontWeight = 700)),
@@ -560,6 +581,8 @@ shinyApp(
     get_next <- reactive({
       done_manually()
       DB        <- matcher_exact()
+      top_n     <- 1000
+      top_n     <- DB$matchinfo$top_n
       d         <- DB$rawdata
       d         <- subset(d, d$.rowid %in% DB$exact$.rowid[is.na(DB$exact$.MATCH)])
       if(nrow(d) == 0){
@@ -573,22 +596,25 @@ shinyApp(
       if(nrow(d) == 0){
         return(data.frame())
       }
-      x <- match_stringdist(x, fields = DB$matchinfo$match_on, DB$hisco)
+      x <- match_stringdist(x, fields = DB$matchinfo$match_on, DB$hisco, top_n = +Inf)
       #x <- iris[sample.int(n = nrow(iris), size = nrow(iris)), ]
       keep <- c(".rowid", DB$matchinfo$match_on, "GOLD", "afstand", "ID_GOLD")
       x$thisone <- rep(NA, nrow(x))
       x <- subset(x, select = c("thisone", keep, ".TEXT"))
+      x$.row <- seq_len(nrow(x))
       x
     })
     output$uo_valideer <- renderReactable({
       x <- get_next()
+      x <- head(x, n = input$ui_matching_stringdist_topn)
       reactable(x,
                 columns = list(
+                  .row = colDef(show = FALSE),
                   .rowid = colDef(show = FALSE),
                   .TEXT = colDef(show = FALSE),
-                  ID_GOLD = colDef(show = TRUE, minWidth = 50, name = "ID_GOLD", align = "right"),
+                  ID_GOLD = colDef(show = FALSE, minWidth = 50, name = "ID_GOLD", align = "right"),
                   afstand = colDef(minWidth = 25, maxWidth = 50, name = "dist"),
-                  GOLD = colDef(minWidth = 100, name = "HISCO term", align = "right"),
+                  GOLD = colDef(minWidth = 100, name = "HISCO term", align = "right", filterable = TRUE),
                   thisone = colDef(
                     name = "",
                     minWidth = 75, maxWidth = 100,
@@ -598,14 +624,15 @@ shinyApp(
                 ),
                 defaultColDef = colDef(minWidth = 100, align = "right"),
                 sortable = TRUE, filterable = FALSE, searchable = FALSE, resizable = TRUE, 
-                showPageSizeOptions = TRUE, pageSizeOptions = c(3, 5, 10, 15, 20, 50, 100, 1000), defaultPageSize = 20,
+                showPageSizeOptions = TRUE, pageSizeOptions = c(3, 5, 10, 15, 20, 50, 100, 1000), defaultPageSize = 10,
                 borderless = TRUE,
                 onClick = JS("function(rowInfo, colInfo) {
                 if (colInfo.id !== 'thisone') {
                   return
                 }
+                field = '.row'
                 if (window.Shiny) {
-                  Shiny.setInputValue('save_row', { index: rowInfo.index + 1 }, { priority: 'event' })
+                  Shiny.setInputValue('save_row', { index: rowInfo.row[field]}, { priority: 'event' })
                 }}"),
                 theme = reactableTheme(
                   rowSelectedStyle = list(backgroundColor = "#eee", boxShadow = "inset 2px 0 0 0 #ffa62d")
@@ -618,7 +645,8 @@ shinyApp(
         showModal(modalDialog(title = "Reeds gevalideerd", reactable(x,
                                         columns = list(file = colDef(show = FALSE), 
                                                        .rowid = colDef(show = FALSE), 
-                                                       now = colDef(show = TRUE, name = "at", format = colFormat(datetime = TRUE)),
+                                                       ID_GOLD = colDef(show = FALSE),
+                                                       now = colDef(show = FALSE, name = "at", format = colFormat(datetime = TRUE, locales = "nl-NL")),
                                                        skipped = colDef(cell = function(value) {
                                                          # Render as an X mark or check mark
                                                          if (value == 1) "\u274c Skipped" else "\u2714\ufe0f Validated"
@@ -647,6 +675,8 @@ shinyApp(
     })
     observe({
       i <- input$save_row
+      removeModal()
+      print(str(i))
       isolate({
         x <- get_next()  
         x <- x[i$index, ]
@@ -656,14 +686,50 @@ shinyApp(
           x$skipped <- rep(FALSE, nrow(x))
           x <- x[, c("file", "now", ".rowid", ".TEXT", "ID_GOLD", "GOLD", "skipped")]
           write_db(name = "hisco_matched", value = x, overwrite = FALSE, append = TRUE)
+          show_alert(title = "Ok", text = paste(x$.TEXT, "=", x$GOLD))
           done_manually(done_manually() + 1)
         }
       })
     })
     observeEvent(input$ui_zoek, {
-      showModal(({
-        modalDialog("TODO")
-      }))
+      zoekterm <- input$ui_zoek
+      zoekterm <- trimws(zoekterm)
+      if(!is.null(zoekterm) && nchar(zoekterm) > 0){
+        showModal("We laden alles in")
+        x <- get_next()
+        cls <- colnames(x)
+        cls <- setNames(lapply(cls, FUN = function(x) colDef(show = FALSE)), cls)
+        cls$ID_GOLD <- colDef(show = TRUE, minWidth = 50, name = "ID_GOLD", align = "right")
+        cls$GOLD <- colDef(show = TRUE, minWidth = 100, name = "HISCO term", align = "right", filterable = TRUE)
+        cls$thisone <- colDef(show = TRUE, 
+                              name = "",
+                              minWidth = 75, maxWidth = 100,
+                              sortable = FALSE,
+                              cell = function() htmltools::tags$button("Correct")
+        )
+        if(nrow(x) > 0 & nchar(zoekterm) > 0){
+          x <- subset(x, grepl(GOLD, pattern = zoekterm, ignore.case = TRUE))  
+        }
+        showModal(
+          modalDialog(title = "Zoek in HISCO",
+                      reactable(x,
+                                columns = cls,
+                                sortable = TRUE, filterable = FALSE, searchable = FALSE, resizable = TRUE,
+                                showPageSizeOptions = TRUE, pageSizeOptions = c(3, 5, 10, 15, 20, 50, 100, 1000), defaultPageSize = 10,
+                                borderless = TRUE,
+                                onClick = JS("function(rowInfo, colInfo) {
+              if (colInfo.id !== 'thisone') {
+                return
+              }
+              field = '.row'
+                if (window.Shiny) {
+                  Shiny.setInputValue('save_row', { index: rowInfo.row[field]}, { priority: 'event' })
+                }}"),
+                                theme = reactableTheme(
+                                  rowSelectedStyle = list(backgroundColor = "#eee", boxShadow = "inset 2px 0 0 0 #ffa62d")
+                                )))
+        )
+      }
     })
     output$uo_stats_matching_manual <- renderUI({
       descriptionBlock(
@@ -675,8 +741,6 @@ shinyApp(
         marginBottom = FALSE
       )
     })
-    
-    
     output$uo_corrigeer <- renderReactable({
       hisco   <- DB_HISCO()
       matched <- DB_matched()
@@ -696,14 +760,35 @@ shinyApp(
         marginBottom = FALSE
       )
     })
+    ##################################################################################v
+    ## UI of exporting to XLSX
+    ##
     outputdataset <- reactive({
-      x <- matching_data()
-      matched <- matcher_exact()
+      matched          <- matcher_exact()
+      matched_nonexact <- read_db("select * from hisco_matched")
+      if(nrow(matched_nonexact) > 0){
+        matched_nonexact <- merge(matched_nonexact, dashdata$GOLD, by.x = "ID_GOLD", by.y = "ID_GOLD", all.x = TRUE, all.y = FALSE, suffixes = c("", "_gold"))
+        matched_nonexact <- subset(matched_nonexact, matched_nonexact$file %in% dashdata$uploaded)
+        matched_nonexact <- matched_nonexact[order(matched_nonexact$now, decreasing = TRUE), ]
+        matched_nonexact <- matched_nonexact[!duplicated(matched_nonexact$.rowid), ]
+      }
       m <- list(HISCO = dashdata$HISCO, GOLD = dashdata$GOLD)
       if(is.data.frame(matched$exact) && nrow(matched$exact) > 0){
-        fields  <- c(uploaded_file_read()$fields, dashdata$HISCO_fields)
         matched <- matched$exact
-        matched <- matched[, intersect(colnames(matched), fields)]
+        matched$.matching_logic <- ifelse(is.na(matched[[head(dashdata$HISCO_fields, n = 1)]]), NA, "exact")
+        fields  <- c(uploaded_file_read()$fields, dashdata$HISCO_fields)
+        fields  <- intersect(colnames(matched), fields)
+        if(nrow(matched_nonexact) > 0){
+          for(field in dashdata$HISCO_fields){
+            matched[[field]] <- ifelse(is.na(matched[[field]]), 
+                                       txt_recode(x = matched$.rowid, from = matched_nonexact$.rowid, to = matched_nonexact[[field]], na.rm = TRUE), 
+                                       matched[[field]])
+          }
+          matched$.matching_logic <- ifelse(is.na(matched$.matching_logic), 
+                                            ifelse(matched$.rowid %in% matched_nonexact$.rowid, "inexact", matched$.matching_logic), 
+                                            matched$.matching_logic)
+        }
+        matched <- matched[, c(fields, ".matching_logic")]
         #print(list(class(matched), class(dashdata$HISCO), class(dashdata$GOLD)))
         if(nrow(matched) > 0){
           m$MATCHED <- matched
@@ -729,10 +814,5 @@ shinyApp(
         write_xlsx(d, path = con)
       }
     )
-    shinyFileChoose(input, id = 'ui_upload_file', roots = dirs, filetypes = c('csv', 'xlsx', 'xls'))
-    observeEvent(input$current_tab, {
-      if (input$current_tab == "tab_upload") {
-      }
-    })
   }
 )
