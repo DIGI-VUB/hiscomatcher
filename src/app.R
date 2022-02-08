@@ -596,7 +596,10 @@ shinyApp(
       if(nrow(d) == 0){
         return(data.frame())
       }
+      showModal(modalDialog("Zoekt naar beroepen die lijken op:", x$.TEXT, footer = NULL))
+      updateSearchInput(session, inputId = "ui_zoek", value = "", trigger = FALSE)
       x <- match_stringdist(x, fields = DB$matchinfo$match_on, DB$hisco, top_n = +Inf)
+      removeModal()
       #x <- iris[sample.int(n = nrow(iris), size = nrow(iris)), ]
       keep <- c(".rowid", DB$matchinfo$match_on, "GOLD", "afstand", "ID_GOLD")
       x$thisone <- rep(NA, nrow(x))
@@ -690,11 +693,11 @@ shinyApp(
         }
       })
     })
+    dlg <- modalDialog(title = "Zoek in HISCO (wacht tot data verschijnt)", reactableOutput(outputId = "uo_zoektabel"))
     observeEvent(input$ui_zoek, {
       zoekterm <- input$ui_zoek
       zoekterm <- trimws(zoekterm)
       if(!is.null(zoekterm) && nchar(zoekterm) > 0){
-        showModal("We laden alles in")
         x <- get_next()
         cls <- colnames(x)
         cls <- setNames(lapply(cls, FUN = function(x) colDef(show = FALSE)), cls)
@@ -709,14 +712,13 @@ shinyApp(
         if(nrow(x) > 0 & nchar(zoekterm) > 0){
           x <- subset(x, grepl(GOLD, pattern = zoekterm, ignore.case = TRUE))  
         }
-        showModal(
-          modalDialog(title = "Zoek in HISCO",
-                      reactable(x,
-                                columns = cls,
-                                sortable = TRUE, filterable = FALSE, searchable = FALSE, resizable = TRUE,
-                                showPageSizeOptions = TRUE, pageSizeOptions = c(3, 5, 10, 15, 20, 50, 100, 1000), defaultPageSize = 10,
-                                borderless = TRUE,
-                                onClick = JS("function(rowInfo, colInfo) {
+        showModal(dlg)
+        output$uo_zoektabel <- renderReactable(reactable(x,
+                                                         columns = cls,
+                                                         sortable = TRUE, filterable = FALSE, searchable = FALSE, resizable = TRUE,
+                                                         showPageSizeOptions = TRUE, pageSizeOptions = c(3, 5, 10, 15, 20, 50, 100, 1000), defaultPageSize = 10,
+                                                         borderless = TRUE,
+                                                         onClick = JS("function(rowInfo, colInfo) {
               if (colInfo.id !== 'thisone') {
                 return
               }
@@ -724,10 +726,9 @@ shinyApp(
                 if (window.Shiny) {
                   Shiny.setInputValue('save_row', { index: rowInfo.row[field]}, { priority: 'event' })
                 }}"),
-                                theme = reactableTheme(
-                                  rowSelectedStyle = list(backgroundColor = "#eee", boxShadow = "inset 2px 0 0 0 #ffa62d")
-                                )))
-        )
+                                                         theme = reactableTheme(
+                                                           rowSelectedStyle = list(backgroundColor = "#eee", boxShadow = "inset 2px 0 0 0 #ffa62d")
+                                                         )))
       }
     })
     output$uo_stats_matching_manual <- renderUI({
