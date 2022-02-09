@@ -765,7 +765,7 @@ shinyApp(
     ##
     outputdataset <- reactive({
       matched          <- matcher_exact()
-      matched_nonexact <- read_db("select * from hisco_matched")
+      matched_nonexact <- read_db("select * from hisco_matched where skipped = 0")
       if(nrow(matched_nonexact) > 0){
         matched_nonexact <- merge(matched_nonexact, dashdata$GOLD, by.x = "ID_GOLD", by.y = "ID_GOLD", all.x = TRUE, all.y = FALSE, suffixes = c("", "_gold"))
         matched_nonexact <- subset(matched_nonexact, matched_nonexact$file %in% dashdata$uploaded)
