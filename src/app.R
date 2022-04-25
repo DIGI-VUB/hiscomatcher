@@ -45,9 +45,9 @@ read_hisco <- function(){
   x$activiteit_cleaned <- strsplit(x$activiteit_cleaned, split = "\\|")
   x
 }
-txt_standardiser <- function(x){
+txt_standardiser <- function(x, from = ""){
   ## Put all in ASCII, lowercase, keep only letters and spaces, no special spaces/punctuation symbols
-  x <- iconv(x, to = "ASCII//TRANSLIT")
+  x <- iconv(x, from = from, to = "ASCII//TRANSLIT")
   x <- tolower(x)
   x <- gsub("[[:space:]+]", " ", x)
   x <- gsub("[^A-Za-z ]", "", x)
@@ -68,14 +68,21 @@ load(url("https://github.com/DIGI-VUB/hiscomatcher/raw/master/data/hisco.RData")
 dashdata$HISCO <- hisco
 dashdata$HISCO$activiteit_standard  <- dashdata$HISCO$Standard
 dashdata$HISCO$activiteit           <- dashdata$HISCO$Original
-dashdata$HISCO$activiteit_standard_cleaned  <- txt_standardiser(dashdata$HISCO$activiteit_standard)
-dashdata$HISCO$activiteit_cleaned           <- txt_standardiser(dashdata$HISCO$activiteit)
+dashdata$HISCO$activiteit_standard_cleaned  <- txt_standardiser(dashdata$HISCO$activiteit_standard, from = "Latin1")
+dashdata$HISCO$activiteit_cleaned           <- txt_standardiser(dashdata$HISCO$activiteit, from = "Latin1")
 dashdata$HISCO$ID_GOLD <- as.integer(factor(dashdata$HISCO$activiteit_standard_cleaned))
-dashdata$GOLD <- paste.data.frame(data = dashdata$HISCO, term = c("activiteit", "activiteit_cleaned", "activiteit_standard", "Original", "Standard"), 
+dashdata$HISCO <- subset(dashdata$HISCO, !is.na(ID_GOLD))
+dashdata$GOLD <- paste.data.frame(data = dashdata$HISCO, 
+                                  term = c("activiteit", "activiteit_cleaned", "activiteit_standard", "Original", "Standard"), 
                                   group = c("ID_GOLD", "activiteit_standard_cleaned", "HISCO", "STATUS", "RELATION", 
                                             "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
                                             "SOCPO", "OCC1950", "Release"), 
                                   collapse = "|")
+# some (6) seem to have a standard term which have differernt HISCO code -> keep only 1 giving preference to higher status and higher HISCO
+#View(subset(dashdata$GOLD, ID_GOLD %in% dashdata$GOLD$ID_GOLD[which(duplicated(dashdata$GOLD$ID_GOLD))]))
+dashdata$GOLD <- dashdata$GOLD[order(dashdata$GOLD$STATUS, dashdata$GOLD$HISCO, decreasing = TRUE), ]
+dashdata$GOLD <- dashdata$GOLD[!duplicated(dashdata$GOLD$ID_GOLD), ]
+
 dashdata$uploaded <- "default"
 
 ## Save initial values to the database
@@ -541,7 +548,7 @@ shinyApp(
       matchinfo <- uploaded_file_matchinfo()
       hisco     <- DB_HISCO()
       if(nrow(matchinfo$userdata$data) > 0){
-        showModal(modalDialog("Zoekt naar zo goed als exacte matches tussen HISCO en jouw dataset", footer = NULL))
+        showModal(modalDialog("Zoekt naar zo goed als exacte matches tussen HISCO en jouw dataset. Van zodra je data ziet verschijnen kan je beginnen werken.", footer = NULL, easyClose = TRUE))
         on.exit({removeModal()})  
       }
       x         <- match_exact(matchinfo$userdata$data, GOLD = hisco, fields = matchinfo$match_on)
@@ -584,13 +591,16 @@ shinyApp(
       top_n     <- 1000
       top_n     <- DB$matchinfo$top_n
       d         <- DB$rawdata
+      # exclude exact matches
       d         <- subset(d, d$.rowid %in% DB$exact$.rowid[is.na(DB$exact$.MATCH)])
       if(nrow(d) == 0){
         return(data.frame())
       }
+      # exclude previously done inexact matches
       d$.TEXT      <- apply(d[,  DB$matchinfo$match_on, drop = FALSE], MARGIN = 1, FUN = txt_collapse, collapse = "::::")
       already_done <- read_db('select ".rowid", ".TEXT" from hisco_matched')
       d            <- subset(d, !d$.TEXT %in% already_done$.TEXT)
+      d            <- subset(d, !is.na(d$.TEXT))
       #x <- d[sample.int(n = nrow(d), size = 1), ]
       x <- head(d, n = 1)
       if(nrow(d) == 0){
@@ -779,9 +789,13 @@ shinyApp(
         fields  <- c(uploaded_file_read()$fields, dashdata$HISCO_fields)
         fields  <- intersect(colnames(matched), fields)
         if(nrow(matched_nonexact) > 0){
+          ## If not exact, getting the manual assignments + if the text was already done (no .rowid, get it based on the .TEXT)
           for(field in dashdata$HISCO_fields){
             matched[[field]] <- ifelse(is.na(matched[[field]]), 
                                        txt_recode(x = matched$.rowid, from = matched_nonexact$.rowid, to = matched_nonexact[[field]], na.rm = TRUE), 
+                                       matched[[field]])
+            matched[[field]] <- ifelse(is.na(matched[[field]]), 
+                                       txt_recode(x = matched$.TEXT, from = matched_nonexact$.TEXT, to = matched_nonexact[[field]], na.rm = TRUE), 
                                        matched[[field]])
           }
           matched$.matching_logic <- ifelse(is.na(matched$.matching_logic), 
