@@ -72,12 +72,22 @@ dashdata$HISCO$activiteit_standard_cleaned  <- txt_standardiser(dashdata$HISCO$a
 dashdata$HISCO$activiteit_cleaned           <- txt_standardiser(dashdata$HISCO$activiteit, from = "Latin1")
 dashdata$HISCO$ID_GOLD <- as.integer(factor(dashdata$HISCO$activiteit_standard_cleaned))
 dashdata$HISCO <- subset(dashdata$HISCO, !is.na(ID_GOLD))
-dashdata$GOLD <- paste.data.frame(data = dashdata$HISCO, 
-                                  term = c("activiteit", "activiteit_cleaned", "activiteit_standard", "Original", "Standard"), 
-                                  group = c("ID_GOLD", "activiteit_standard_cleaned", "HISCO", "STATUS", "RELATION", 
-                                            "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
-                                            "SOCPO", "OCC1950", "Release"), 
-                                  collapse = "|")
+dashdata$GOLD <- as.data.table(dashdata$HISCO)
+dashdata$GOLD <- dashdata$GOLD[, list(activiteit = paste(unique(activiteit), collapse = "|"),
+                                      activiteit_cleaned = paste(unique(activiteit_cleaned), collapse = "|"),
+                                      activiteit_standard = paste(unique(activiteit_standard), collapse = "|"),
+                                      Original = paste(unique(Original), collapse = "|"),
+                                      Standard = paste(unique(Standard), collapse = "|")), 
+                               by = c("ID_GOLD", "activiteit_standard_cleaned", "HISCO", "STATUS", "RELATION", 
+                                          "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
+                                          "SOCPO", "OCC1950", "Release")]
+dashdata$GOLD <- setDF(dashdata$GOLD)
+#dashdata$GOLD <- paste.data.frame(data = dashdata$HISCO, 
+#                                  term = c("activiteit", "activiteit_cleaned", "activiteit_standard", "Original", "Standard"), 
+#                                  group = c("ID_GOLD", "activiteit_standard_cleaned", "HISCO", "STATUS", "RELATION", 
+#                                            "PRODUCT", "HISCLASS", "HISCLASS_5", "HISCAM_U1", "HISCAM_NL", 
+#                                            "SOCPO", "OCC1950", "Release"), 
+#                                  collapse = "|")
 # some (6) seem to have a standard term which have differernt HISCO code -> keep only 1 giving preference to higher status and higher HISCO
 #View(subset(dashdata$GOLD, ID_GOLD %in% dashdata$GOLD$ID_GOLD[which(duplicated(dashdata$GOLD$ID_GOLD))]))
 dashdata$GOLD <- dashdata$GOLD[order(dashdata$GOLD$STATUS, dashdata$GOLD$HISCO, decreasing = TRUE), ]
