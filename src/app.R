@@ -815,6 +815,9 @@ shinyApp(
           matched$.matching_logic <- ifelse(is.na(matched$.matching_logic), 
                                             ifelse(matched$.rowid %in% matched_nonexact$.rowid, "inexact", matched$.matching_logic), 
                                             matched$.matching_logic)
+          matched$.matching_logic <- ifelse(is.na(matched$.matching_logic), 
+                                            ifelse(matched$.TEXT %in% matched_nonexact$.TEXT, "inexact", matched$.matching_logic), 
+                                            matched$.matching_logic)
         }
         matched <- matched[, c(fields, ".matching_logic")]
         #print(list(class(matched), class(dashdata$HISCO), class(dashdata$GOLD)))
