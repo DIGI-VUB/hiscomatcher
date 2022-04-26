@@ -135,6 +135,7 @@ match_exact <- function(x, fields, GOLD, VARIANTS = dashdata$HISCO){
     x$.match          <- ifelse(is.na(x$.match), ifelse(is.na(x$.match_standard), x$.match_variant, x$.match_standard), x$.match)
   }
   x$.MATCH <- txt_recode(x$.match, from = VARIANTS$ID_GOLD, to = VARIANTS$Standard, na.rm = TRUE)
+  x$.TEXT  <- apply(x[,  fields, drop = FALSE], MARGIN = 1, FUN = txt_collapse, collapse = "::::")
   x <- merge(x, GOLD, by.x = ".match", by.y = "ID_GOLD", sort = FALSE, all.x = TRUE)
   x <- x[order(x$.rowid, decreasing = FALSE), ]
   x
@@ -822,6 +823,7 @@ shinyApp(
         }
       }
       m <- m[intersect(c("MATCHED", "HISCO"), names(m))]
+      m$.TEXT <- NULL
       m 
     })
     output$uo_download_results <- downloadHandler(
