@@ -630,6 +630,9 @@ shinyApp(
     output$uo_valideer <- renderReactable({
       x <- get_next()
       x <- head(x, n = input$ui_matching_stringdist_topn)
+      if(ncol(x) == 0){
+        x <- data.frame(.row = integer(), .rowid = integer(), .TEXT = character(), ID_GOLD = integer(), afstand = integer(), GOLD = character(), stringsAsFactors = FALSE) 
+      }
       reactable(x,
                 columns = list(
                   .row = colDef(show = FALSE),
